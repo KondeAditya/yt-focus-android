@@ -248,6 +248,9 @@ export function getFullscreenInterceptorScript(): string {
 
         // iOS native WebKit fullscreen viewer lifecycle events
         v.addEventListener('webkitbeginfullscreen', function() {
+          if (window.__zenTubeOnFullscreenEnter) {
+            window.__zenTubeOnFullscreenEnter();
+          }
           notifyReactNative(true);
         }, true);
 
@@ -355,10 +358,20 @@ export function getMediaBackgroundingScript(pipEnabled: boolean = true): string 
       try {
         window.__zenTubePipEnabled = ${pipEnabled};
         window.__zenTubeIsBackground = false;
+        var lastFSEnterTime = 0;
+        var lastBackgroundTime = 0;
 
         // Public helper for React Native AppState to accurately set background/foreground state
         window.__zenTubeSetBackground = function(isBg) {
           window.__zenTubeIsBackground = !!isBg;
+          if (isBg) {
+            lastBackgroundTime = Date.now();
+          }
+        };
+
+        // Track fullscreen enter timestamp globally
+        window.__zenTubeOnFullscreenEnter = function() {
+          lastFSEnterTime = Date.now();
         };
 
         // ── 1. Page Visibility Spoofing (Brave Shield MediaBackgrounding) ──
@@ -389,9 +402,7 @@ export function getMediaBackgroundingScript(pipEnabled: boolean = true): string 
 
         var origPause = HTMLVideoElement.prototype.pause;
         HTMLVideoElement.prototype.pause = function() {
-          if (!window.__zenTubeIsBackground) {
-            this.userHitPause = true;
-          }
+          this.userHitPause = true;
           return origPause.apply(this, arguments);
         };
 
@@ -433,18 +444,18 @@ export function getMediaBackgroundingScript(pipEnabled: boolean = true): string 
               var playPromise = origPlay.call(v);
               if (playPromise && playPromise.catch) {
                 playPromise.catch(function() {
-                  if (attempt < 3) {
+                  if (attempt < 4) {
                     setTimeout(function() {
                       tryResumeVideo(v, attempt + 1);
-                    }, 200 * (attempt + 1));
+                    }, 150 * (attempt + 1));
                   }
                 });
               }
             } catch(e) {
-              if (attempt < 3) {
+              if (attempt < 4) {
                 setTimeout(function() {
                   tryResumeVideo(v, attempt + 1);
-                }, 200 * (attempt + 1));
+                }, 150 * (attempt + 1));
               }
             }
           }
@@ -476,25 +487,62 @@ export function getMediaBackgroundingScript(pipEnabled: boolean = true): string 
             v.userHitPause = false;
           }, false);
 
-          // ── THE CRITICAL PAUSE EVENT HANDLER ──
-          // 1. If in WebKit native fullscreen: User tapped the native AVPlayer pause button!
-          //    -> v.userHitPause = true, stay paused, NEVER auto-resume.
-          // 2. If app is in foreground: User tapped pause on web/headset/keyboard!
-          //    -> v.userHitPause = true, stay paused, NEVER auto-resume.
-          // 3. ONLY if app is in background AND user did not pause -> auto-resume for background playback.
+          // Track fullscreen lifecycle on video
+          v.addEventListener('webkitbeginfullscreen', function() {
+            lastFSEnterTime = Date.now();
+            // Ensure video continues playing inside WebKit fullscreen
+            setTimeout(function() {
+              if (!v.userHitPause && v.paused) {
+                tryResumeVideo(v, 0);
+              }
+            }, 100);
+            setTimeout(function() {
+              if (!v.userHitPause && v.paused) {
+                tryResumeVideo(v, 0);
+              }
+            }, 300);
+          }, true);
+
+          // ── THE ROCK-SOLID PAUSE EVENT HANDLER ──
           v.addEventListener('pause', function() {
+            var now = Date.now();
+            var isFSTransition = (now - lastFSEnterTime < 1500);
+
+            // 1. If WebKit paused during transition to fullscreen, keep playing!
+            if (isFSTransition) {
+              if (!v.userHitPause && !v.ended) {
+                tryResumeVideo(v, 0);
+              }
+              return;
+            }
+
+            // 2. If app is in background:
+            if (window.__zenTubeIsBackground) {
+              // If user tapped pause in Control Center / Lock Screen (after the initial minimize window)
+              if (now - lastBackgroundTime > 800) {
+                v.userHitPause = true;
+                return;
+              }
+              // Otherwise it's the initial OS backgrounding pause -> auto-resume!
+              if (!v.userHitPause && !v.ended) {
+                tryResumeVideo(v, 0);
+              }
+              return;
+            }
+
+            // 3. If in WebKit fullscreen and user tapped native AVPlayer pause button
             if (isVideoInFullscreen(v)) {
               v.userHitPause = true;
               return;
             }
 
-            if (!window.__zenTubeIsBackground) {
-              v.userHitPause = true;
-              return;
-            }
-
+            // 4. Any other pause event where user didn't explicitly call pause (e.g. interruption)
             if (!v.userHitPause && !v.ended) {
-              tryResumeVideo(v, 0);
+              setTimeout(function() {
+                if (!v.userHitPause && !v.ended && v.paused) {
+                  tryResumeVideo(v, 0);
+                }
+              }, 50);
             }
           }, false);
 
@@ -506,6 +554,7 @@ export function getMediaBackgroundingScript(pipEnabled: boolean = true): string 
         // ── 6. Background/Foreground detection via page lifecycle ──
         window.addEventListener('pagehide', function() {
           window.__zenTubeIsBackground = true;
+          lastBackgroundTime = Date.now();
           if (window.__zenTubePipEnabled) {
             window.__triggerZenTubePiP();
           }
@@ -517,7 +566,7 @@ export function getMediaBackgroundingScript(pipEnabled: boolean = true): string 
                 tryResumeVideo(vids[i], 0);
               }
             }
-          }, 100);
+          }, 80);
         });
 
         window.addEventListener('pageshow', function() {
@@ -525,8 +574,6 @@ export function getMediaBackgroundingScript(pipEnabled: boolean = true): string 
         });
 
         // Window blur/focus handling:
-        // When WebKit presents AVPlayerViewController for fullscreen, window loses focus (blur).
-        // That is NOT app backgrounding!
         window.addEventListener('blur', function() {
           var vids = document.querySelectorAll('video');
           var anyInFS = false;
@@ -542,6 +589,7 @@ export function getMediaBackgroundingScript(pipEnabled: boolean = true): string 
 
           if (document.hidden) {
             window.__zenTubeIsBackground = true;
+            lastBackgroundTime = Date.now();
           }
         });
 
