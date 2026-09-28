@@ -368,7 +368,25 @@ export function getFullscreenInterceptorScript(): string {
           '  display: none !important;',
           '}',
 
-          // ── PERMANENTLY HIDE DESKTOP UNMUTE & BROKEN DESKTOP CHROME ──
+          // ── PERMANENTLY HIDE WEBKIT MEDIA CONTROLS & DESKTOP CHROME ──
+          'video::-webkit-media-controls,',
+          'video::-webkit-media-controls-enclosure,',
+          'video::-webkit-media-controls-panel,',
+          'video::-webkit-media-controls-play-button,',
+          'video::-webkit-media-controls-start-playback-button,',
+          'video::-webkit-media-controls-overlay-play-button,',
+          'video::-webkit-media-controls-fullscreen-button,',
+          'video::-webkit-media-controls-wireless-playback-picker-button,',
+          'video::-webkit-media-controls-current-time-display,',
+          'video::-webkit-media-controls-time-remaining-display,',
+          'video::-webkit-media-controls-timeline,',
+          'video::-webkit-media-controls-volume-slider,',
+          'video::-webkit-media-controls-mute-button {',
+          '  display: none !important;',
+          '  -webkit-appearance: none !important;',
+          '  opacity: 0 !important;',
+          '  pointer-events: none !important;',
+          '}',
           '.ytp-unmute,',
           '.ytp-unmute-box,',
           '.ytp-unmute-button,',
@@ -417,10 +435,22 @@ export function getFullscreenInterceptorScript(): string {
         }
       }
 
+      function enforceInlineVideo(v) {
+        if (!v) return;
+        try {
+          v.setAttribute('playsinline', 'true');
+          v.setAttribute('webkit-playsinline', 'true');
+          v.playsInline = true;
+          v.webkitPlaysInline = true;
+          v.removeAttribute('controls');
+        } catch(e) {}
+      }
+
       function ensureVideoAudio() {
         try {
           var v = document.querySelector('video');
           if (v) {
+            enforceInlineVideo(v);
             if (v.muted) v.muted = false;
             if (v.volume === 0) v.volume = 1;
           }
@@ -488,18 +518,19 @@ export function getFullscreenInterceptorScript(): string {
         }, 150);
       }
 
-      // Native API mocks & overrides
+      // ── Hotstar-style WebKit Fullscreen Neutralization ──
+      // Prevents WebKit native media controls and AVPlayer from ever taking over
       try {
         Object.defineProperty(HTMLVideoElement.prototype, 'webkitDisplayingFullscreen', {
           configurable: true,
           get: function() {
-            return isLandscapeFS;
+            return false;
           }
         });
         Object.defineProperty(HTMLVideoElement.prototype, 'webkitSupportsFullscreen', {
           configurable: true,
           get: function() {
-            return true;
+            return false;
           }
         });
         Object.defineProperty(document, 'fullscreenElement', {
@@ -517,7 +548,7 @@ export function getFullscreenInterceptorScript(): string {
         Object.defineProperty(document, 'webkitIsFullScreen', {
           configurable: true,
           get: function() {
-            return isLandscapeFS;
+            return false;
           }
         });
       } catch(e) {}
@@ -530,25 +561,13 @@ export function getFullscreenInterceptorScript(): string {
         exitCompleteFullscreen();
       };
 
-      // Intercept iOS WebKit native video fullscreen trigger
+      // Neuter WebKit native fullscreen trigger completely (matches Hotstar implementation)
       HTMLVideoElement.prototype.webkitEnterFullscreen = function() {
-        var now = Date.now();
-        if (now - lastToggleTime < 1000) return;
-        lastToggleTime = now;
-
-        if (isLandscapeFS) {
-          exitCompleteFullscreen(this);
-        } else {
-          enterCompleteFullscreen(this);
-        }
+        return false;
       };
 
       HTMLVideoElement.prototype.webkitExitFullscreen = function() {
-        var now = Date.now();
-        if (now - lastToggleTime < 1000) return;
-        lastToggleTime = now;
-
-        exitCompleteFullscreen(this);
+        return false;
       };
 
       // ── Click / Tap interception ONLY for Fullscreen / Resize toggle button ──
