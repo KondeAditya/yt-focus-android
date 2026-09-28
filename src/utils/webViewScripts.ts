@@ -309,11 +309,16 @@ export function getFullscreenInterceptorScript(): string {
         );
         if (fsBtn) {
           var v = document.querySelector('video');
-          if (v && !v.webkitDisplayingFullscreen && v.webkitPresentationMode !== 'fullscreen') {
-            if (typeof v.webkitEnterFullscreen === 'function') {
-              try {
-                v.webkitEnterFullscreen();
-              } catch(err) {}
+          if (v) {
+            v.userHitPause = false;
+            window.__zenTubeIsEnteringFS = true;
+            setTimeout(function() { window.__zenTubeIsEnteringFS = false; }, 2500);
+            if (!v.webkitDisplayingFullscreen && v.webkitPresentationMode !== 'fullscreen') {
+              if (typeof v.webkitEnterFullscreen === 'function') {
+                try {
+                  v.webkitEnterFullscreen();
+                } catch(err) {}
+              }
             }
           }
         }
@@ -402,7 +407,11 @@ export function getMediaBackgroundingScript(pipEnabled: boolean = true): string 
 
         var origPause = HTMLVideoElement.prototype.pause;
         HTMLVideoElement.prototype.pause = function() {
-          this.userHitPause = true;
+          // If entering fullscreen or in background, YouTube is triggering pause internally.
+          // This is NOT an intentional user click pause!
+          if (!window.__zenTubeIsEnteringFS && !window.__zenTubeIsBackground) {
+            this.userHitPause = true;
+          }
           return origPause.apply(this, arguments);
         };
 
@@ -489,37 +498,47 @@ export function getMediaBackgroundingScript(pipEnabled: boolean = true): string 
 
           // Track fullscreen lifecycle on video
           v.addEventListener('webkitbeginfullscreen', function() {
+            v.userHitPause = false;
             lastFSEnterTime = Date.now();
-            // Ensure video continues playing inside WebKit fullscreen
-            setTimeout(function() {
-              if (!v.userHitPause && v.paused) {
-                tryResumeVideo(v, 0);
-              }
-            }, 100);
-            setTimeout(function() {
-              if (!v.userHitPause && v.paused) {
-                tryResumeVideo(v, 0);
-              }
-            }, 300);
+            window.__zenTubeIsEnteringFS = true;
+
+            // Unconditionally force resume so video is PLAYING inside WebKit fullscreen!
+            function forcePlay() {
+              v.userHitPause = false;
+              try {
+                var p = origPlay.call(v);
+                if (p && p.catch) p.catch(function(){});
+              } catch(e) {}
+            }
+
+            forcePlay();
+            setTimeout(forcePlay, 80);
+            setTimeout(forcePlay, 200);
+            setTimeout(forcePlay, 400);
+            setTimeout(forcePlay, 800);
+            setTimeout(forcePlay, 1200);
+            setTimeout(function() { window.__zenTubeIsEnteringFS = false; }, 2000);
           }, true);
 
           // ── THE ROCK-SOLID PAUSE EVENT HANDLER ──
           v.addEventListener('pause', function() {
             var now = Date.now();
-            var isFSTransition = (now - lastFSEnterTime < 1500);
+            var isFSTransition = window.__zenTubeIsEnteringFS || (now - lastFSEnterTime < 2000);
 
             // 1. If WebKit paused during transition to fullscreen, keep playing!
             if (isFSTransition) {
-              if (!v.userHitPause && !v.ended) {
-                tryResumeVideo(v, 0);
-              }
+              v.userHitPause = false;
+              try {
+                var p = origPlay.call(v);
+                if (p && p.catch) p.catch(function(){});
+              } catch(e) {}
               return;
             }
 
             // 2. If app is in background:
             if (window.__zenTubeIsBackground) {
               // If user tapped pause in Control Center / Lock Screen (after the initial minimize window)
-              if (now - lastBackgroundTime > 800) {
+              if (now - lastBackgroundTime > 1000) {
                 v.userHitPause = true;
                 return;
               }
@@ -536,8 +555,13 @@ export function getMediaBackgroundingScript(pipEnabled: boolean = true): string 
               return;
             }
 
-            // 4. Any other pause event where user didn't explicitly call pause (e.g. interruption)
-            if (!v.userHitPause && !v.ended) {
+            // 4. In portrait: if user clicked pause, HTMLVideoElement.prototype.pause already set userHitPause = true
+            if (v.userHitPause) {
+              return;
+            }
+
+            // 5. Any unintentional pause (e.g. interruption)
+            if (!v.ended) {
               setTimeout(function() {
                 if (!v.userHitPause && !v.ended && v.paused) {
                   tryResumeVideo(v, 0);
