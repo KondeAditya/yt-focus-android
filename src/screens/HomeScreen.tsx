@@ -116,7 +116,7 @@ export function HomeScreen() {
 
       return () => {
         subscription?.remove();
-        // If in fullscreen when navigating away, tell webView to exit fullscreen
+        // If in fullscreen when navigating away, tell webView to exit fullscreen and restore portrait
         if (isFullscreenRef.current) {
           webViewRef.current?.injectJavaScript(`
             (function() {
@@ -126,6 +126,8 @@ export function HomeScreen() {
             })();
             true;
           `);
+          ScreenOrientation.lockAsync(ScreenOrientation.OrientationLock.PORTRAIT_UP).catch(() => {});
+          StatusBar.setHidden(false);
         }
       };
     }, [])

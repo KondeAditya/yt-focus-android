@@ -1,4 +1,4 @@
-import React, { useRef, useCallback, useMemo, forwardRef, useImperativeHandle } from 'react';
+import React, { useRef, useCallback, useMemo, forwardRef, useImperativeHandle, useEffect } from 'react';
 import { StyleSheet, Platform, View, StatusBar } from 'react-native';
 import { WebView, WebViewNavigation } from 'react-native-webview';
 import { ShouldStartLoadRequest } from 'react-native-webview/lib/WebViewTypes';
@@ -132,6 +132,14 @@ export const YouTubeWebView = forwardRef<YouTubeWebViewRef, YouTubeWebViewProps>
       return false;
     }, [contentFilter]);
 
+    // Restore portrait orientation if component unmounts
+    useEffect(() => {
+      return () => {
+        ScreenOrientation.lockAsync(ScreenOrientation.OrientationLock.PORTRAIT_UP).catch(() => {});
+        StatusBar.setHidden(false);
+      };
+    }, []);
+
     // Handle messages from injected JavaScript
     const handleMessage = useCallback((event: any) => {
       try {
@@ -139,9 +147,13 @@ export const YouTubeWebView = forwardRef<YouTubeWebViewRef, YouTubeWebViewProps>
         if (data.type === 'fullscreen') {
           const isFS = !!data.isFullscreen;
           if (isFS) {
-            ScreenOrientation.lockAsync(ScreenOrientation.OrientationLock.LANDSCAPE).catch(() => {});
+            // Strictly force landscape orientation even if auto-rotate (Portrait Lock) is off
+            ScreenOrientation.lockAsync(ScreenOrientation.OrientationLock.LANDSCAPE_RIGHT)
+              .then(() => ScreenOrientation.lockAsync(ScreenOrientation.OrientationLock.LANDSCAPE))
+              .catch(() => ScreenOrientation.lockAsync(ScreenOrientation.OrientationLock.LANDSCAPE).catch(() => {}));
             StatusBar.setHidden(true);
           } else {
+            // Strictly return to portrait orientation
             ScreenOrientation.lockAsync(ScreenOrientation.OrientationLock.PORTRAIT_UP).catch(() => {});
             StatusBar.setHidden(false);
           }

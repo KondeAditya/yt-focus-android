@@ -299,26 +299,55 @@ export function getFullscreenInterceptorScript(): string {
       document.addEventListener('click', function(e) {
         var target = e.target;
         if (!target) return;
-        var fsBtn = target.closest(
+        // Enter fullscreen buttons
+        var enterFsBtn = target.closest(
           '.fullscreen-icon, ' +
           'button.fullscreen-icon, ' +
           'button[aria-label*="Full screen" i], ' +
           'button[aria-label*="Fullscreen" i], ' +
           '.ytm-fullscreen-button, ' +
-          '.ytp-fullscreen-button'
+          '.ytp-fullscreen-button, ' +
+          'button[title*="Full screen" i], ' +
+          'button[title*="Fullscreen" i], ' +
+          'button[data-title-no-tooltip*="Full screen" i], ' +
+          'button[aria-keyshortcuts="f"]'
         );
-        if (fsBtn) {
+        if (enterFsBtn) {
           var v = document.querySelector('video');
           if (v) {
             v.userHitPause = false;
             window.__zenTubeIsEnteringFS = true;
             setTimeout(function() { window.__zenTubeIsEnteringFS = false; }, 2500);
+
+            // Immediately tell React Native to lock orientation to landscape
+            notifyReactNative(true);
+
             if (!v.webkitDisplayingFullscreen && v.webkitPresentationMode !== 'fullscreen') {
               if (typeof v.webkitEnterFullscreen === 'function') {
                 try {
                   v.webkitEnterFullscreen();
                 } catch(err) {}
               }
+            }
+          }
+          return;
+        }
+
+        // Exit fullscreen / collapse buttons
+        var exitFsBtn = target.closest(
+          'button[aria-label*="Exit full screen" i], ' +
+          'button[aria-label*="Exit fullscreen" i], ' +
+          'button[aria-label*="Collapse" i], ' +
+          'button[title*="Exit full screen" i], ' +
+          'button[title*="Exit fullscreen" i], ' +
+          '.ytp-collapse-button'
+        );
+        if (exitFsBtn) {
+          notifyReactNative(false);
+          var v2 = document.querySelector('video');
+          if (v2 && (v2.webkitDisplayingFullscreen || v2.webkitPresentationMode === 'fullscreen')) {
+            if (typeof v2.webkitExitFullscreen === 'function') {
+              try { v2.webkitExitFullscreen(); } catch(err) {}
             }
           }
         }
@@ -407,9 +436,12 @@ export function getMediaBackgroundingScript(pipEnabled: boolean = true): string 
 
         var origPause = HTMLVideoElement.prototype.pause;
         HTMLVideoElement.prototype.pause = function() {
-          // If entering fullscreen or in background, YouTube is triggering pause internally.
-          // This is NOT an intentional user click pause!
-          if (!window.__zenTubeIsEnteringFS && !window.__zenTubeIsBackground) {
+          // If entering fullscreen, YouTube is triggering pause internally.
+          // Block it completely so the native AVPlayer presents in a playing state!
+          if (window.__zenTubeIsEnteringFS) {
+            return;
+          }
+          if (!window.__zenTubeIsBackground) {
             this.userHitPause = true;
           }
           return origPause.apply(this, arguments);
@@ -512,12 +544,14 @@ export function getMediaBackgroundingScript(pipEnabled: boolean = true): string 
             }
 
             forcePlay();
-            setTimeout(forcePlay, 80);
-            setTimeout(forcePlay, 200);
-            setTimeout(forcePlay, 400);
+            setTimeout(forcePlay, 50);
+            setTimeout(forcePlay, 120);
+            setTimeout(forcePlay, 250);
+            setTimeout(forcePlay, 500);
             setTimeout(forcePlay, 800);
             setTimeout(forcePlay, 1200);
-            setTimeout(function() { window.__zenTubeIsEnteringFS = false; }, 2000);
+            setTimeout(forcePlay, 1800);
+            setTimeout(function() { window.__zenTubeIsEnteringFS = false; }, 2500);
           }, true);
 
           // ── THE ROCK-SOLID PAUSE EVENT HANDLER ──
