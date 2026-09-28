@@ -215,14 +215,13 @@ export function getEnhancementScript(): string {
   `;
 }
 
-// ─── Complete In-Page Fullscreen Engine ────────────────────────
+// ─── Standard WebKit Fullscreen Script ────────────────────────
 /**
- * Enables complete edge-to-edge fullscreen for YouTube without launching
- * iOS WebKit's native AVPlayer:
- * 1. Expands #movie_player to fill 100vw x 100vh with fixed positioning.
- * 2. Hides the header bar, video title/likes, and right-column recommended videos.
- * 3. Keeps YouTube's native touch controls (play/pause, scrubber, gear icon for 1080p quality & speed) fully accessible.
- * 4. Rotates device to landscape and restores portrait on exit.
+ * Enables standard iOS WebKit native fullscreen viewer (AVPlayerViewController) for landscape:
+ * 1. Attaches webkitbeginfullscreen / webkitendfullscreen listeners to video elements.
+ * 2. On enter: notifies React Native to lock orientation to LANDSCAPE and hide status bar.
+ * 3. On exit: notifies React Native to lock orientation to PORTRAIT_UP and restore status bar.
+ * 4. Ensures native WebKit fullscreen can be invoked from YouTube's fullscreen button.
  */
 export function getFullscreenInterceptorScript(): string {
   return `
@@ -231,428 +230,107 @@ export function getFullscreenInterceptorScript(): string {
       if (window.__zenTubeFSInstalled) return;
       window.__zenTubeFSInstalled = true;
 
-      var isLandscapeFS = false;
-      var lastToggleTime = 0;
-      var FS_STYLE_ID = '__zentube_complete_fs_style';
-
-      // ── 1. Inject Complete Fullscreen CSS ──
-      function injectCompleteFSCSS() {
-        if (document.getElementById(FS_STYLE_ID)) return;
-        var style = document.createElement('style');
-        style.id = FS_STYLE_ID;
-        style.textContent = [
-          // ── Root page lockdown in fullscreen ──
-          'html.__yt_zen_fullscreen, body.__yt_zen_fullscreen {',
-          '  overflow: hidden !important;',
-          '  width: 100vw !important;',
-          '  height: 100vh !important;',
-          '  margin: 0 !important;',
-          '  padding: 0 !important;',
-          '  background: #000 !important;',
-          '  position: fixed !important;',
-          '  top: 0 !important;',
-          '  left: 0 !important;',
-          '}',
-
-          // ── Hide page chrome & recommendation feed below video ──
-          'html.__yt_zen_fullscreen #header-bar,',
-          'html.__yt_zen_fullscreen ytm-header-bar,',
-          'html.__yt_zen_fullscreen ytm-mobile-topbar-renderer,',
-          'html.__yt_zen_fullscreen ytm-pivot-bar-renderer,',
-          'html.__yt_zen_fullscreen .pivot-bar,',
-          'html.__yt_zen_fullscreen .watch-below-the-player,',
-          'html.__yt_zen_fullscreen #below,',
-          'html.__yt_zen_fullscreen ytm-single-column-watch-next-results-renderer,',
-          'html.__yt_zen_fullscreen .related-items-container,',
-          'html.__yt_zen_fullscreen #related,',
-          'html.__yt_zen_fullscreen #comments {',
-          '  display: none !important;',
-          '}',
-
-          // ── App & Watch containers fill screen ──
-          'html.__yt_zen_fullscreen ytm-app,',
-          'html.__yt_zen_fullscreen #app,',
-          'html.__yt_zen_fullscreen ytm-watch {',
-          '  transform: none !important;',
-          '  perspective: none !important;',
-          '  filter: none !important;',
-          '  overflow: visible !important;',
-          '  padding: 0 !important;',
-          '  margin: 0 !important;',
-          '  max-width: none !important;',
-          '  width: 100vw !important;',
-          '  height: 100vh !important;',
-          '}',
-
-          // ── Fixed Player Container (Edge-to-Edge) ──
-          'html.__yt_zen_fullscreen #player-container-id,',
-          'html.__yt_zen_fullscreen ytm-watch #player-container-id,',
-          'html.__yt_zen_fullscreen .player-container,',
-          'html.__yt_zen_fullscreen ytm-watch .player-container {',
-          '  position: fixed !important;',
-          '  top: 0 !important;',
-          '  left: 0 !important;',
-          '  width: 100vw !important;',
-          '  height: 100vh !important;',
-          '  max-width: 100vw !important;',
-          '  max-height: 100vh !important;',
-          '  min-width: 100vw !important;',
-          '  min-height: 100vh !important;',
-          '  z-index: 1000 !important;',
-          '  background: #000 !important;',
-          '  border-radius: 0 !important;',
-          '  margin: 0 !important;',
-          '  padding: 0 !important;',
-          '  box-sizing: border-box !important;',
-          '  overflow: hidden !important;',
-          '}',
-
-          'html.__yt_zen_fullscreen #player,',
-          'html.__yt_zen_fullscreen #movie_player,',
-          'html.__yt_zen_fullscreen .html5-video-player,',
-          'html.__yt_zen_fullscreen .player-wrapper,',
-          'html.__yt_zen_fullscreen .html5-video-container {',
-          '  position: absolute !important;',
-          '  top: 0 !important;',
-          '  left: 0 !important;',
-          '  width: 100% !important;',
-          '  height: 100% !important;',
-          '  max-width: 100% !important;',
-          '  max-height: 100% !important;',
-          '  min-width: 100% !important;',
-          '  min-height: 100% !important;',
-          '  background: transparent !important;',
-          '  border-radius: 0 !important;',
-          '  margin: 0 !important;',
-          '  padding: 0 !important;',
-          '  box-sizing: border-box !important;',
-          '  z-index: 1 !important;',
-          '}',
-
-          'html.__yt_zen_fullscreen video,',
-          'html.__yt_zen_fullscreen .html5-main-video {',
-          '  position: absolute !important;',
-          '  top: 0 !important;',
-          '  left: 0 !important;',
-          '  width: 100% !important;',
-          '  height: 100% !important;',
-          '  max-width: 100% !important;',
-          '  max-height: 100% !important;',
-          '  object-fit: contain !important;',
-          '  background: #000 !important;',
-          '  z-index: 1 !important;',
-          '}',
-
-          // ── SOLVE MORE VIDEOS, SHARE, SAVE OVERLAP ON RESIZE & SCRUBBER ──
-          'html.__yt_zen_fullscreen button[aria-label*="More videos" i],',
-          'html.__yt_zen_fullscreen .ytm-more-videos-button,',
-          'html.__yt_zen_fullscreen .more-videos-button,',
-          'html.__yt_zen_fullscreen button[aria-label*="Share" i],',
-          'html.__yt_zen_fullscreen button[aria-label*="Save" i],',
-          'html.__yt_zen_fullscreen button[aria-label*="Remix" i],',
-          'html.__yt_zen_fullscreen button[aria-label*="Dislike" i],',
-          'html.__yt_zen_fullscreen button[aria-label*="Like" i],',
-          'html.__yt_zen_fullscreen .slim-video-action-bar-actions,',
-          'html.__yt_zen_fullscreen ytm-slim-video-action-bar-renderer,',
-          'html.__yt_zen_fullscreen .ytp-pause-overlay,',
-          'html.__yt_zen_fullscreen .ytp-expand-pause-overlay,',
-          'html.__yt_zen_fullscreen .ytp-suggestion-set,',
-          'html.__yt_zen_fullscreen .fullscreen-engagement-overlay,',
-          'html.__yt_zen_fullscreen ytm-fullscreen-engagement-overlay,',
-          'html.__yt_zen_fullscreen ytm-engagement-panel-section-list-renderer,',
-          'html.__yt_zen_fullscreen .engagement-panel-container,',
-          'html.__yt_zen_fullscreen .ytp-ce-element,',
-          'html.__yt_zen_fullscreen .ytp-endscreen-content,',
-          'html.__yt_zen_fullscreen .ytp-cards-teaser,',
-          'html.__yt_zen_fullscreen .ytp-suggested-action-badge {',
-          '  display: none !important;',
-          '}',
-
-          // ── PERMANENTLY HIDE WEBKIT MEDIA CONTROLS & DESKTOP CHROME ──
-          'video::-webkit-media-controls,',
-          'video::-webkit-media-controls-enclosure,',
-          'video::-webkit-media-controls-panel,',
-          'video::-webkit-media-controls-play-button,',
-          'video::-webkit-media-controls-start-playback-button,',
-          'video::-webkit-media-controls-overlay-play-button,',
-          'video::-webkit-media-controls-fullscreen-button,',
-          'video::-webkit-media-controls-wireless-playback-picker-button,',
-          'video::-webkit-media-controls-current-time-display,',
-          'video::-webkit-media-controls-time-remaining-display,',
-          'video::-webkit-media-controls-timeline,',
-          'video::-webkit-media-controls-volume-slider,',
-          'video::-webkit-media-controls-mute-button {',
-          '  display: none !important;',
-          '  -webkit-appearance: none !important;',
-          '  opacity: 0 !important;',
-          '  pointer-events: none !important;',
-          '}',
-          '.ytp-unmute,',
-          '.ytp-unmute-box,',
-          '.ytp-unmute-button,',
-          '.ytp-unmute-inner,',
-          '.ytp-volume-control-hover-text,',
-          '.ytp-chrome-bottom,',
-          '.ytp-chrome-top {',
-          '  display: none !important;',
-          '  visibility: hidden !important;',
-          '  opacity: 0 !important;',
-          '  pointer-events: none !important;',
-          '}',
-
-          // ── SETTINGS POPUP MENU (Quality 1080p, Playback speed, Subtitles) ──
-          'html.__yt_zen_fullscreen ytm-menu-popup-renderer,',
-          'html.__yt_zen_fullscreen .ytm-menu-popup-renderer,',
-          'html.__yt_zen_fullscreen tp-yt-iron-dropdown,',
-          'html.__yt_zen_fullscreen ytm-bottom-sheet-renderer,',
-          'html.__yt_zen_fullscreen ytm-sheet,',
-          'html.__yt_zen_fullscreen yt-sheet-renderer,',
-          'html.__yt_zen_fullscreen .menu-content,',
-          'html.__yt_zen_fullscreen .dropdown-content,',
-          'html.__yt_zen_fullscreen [role="dialog"],',
-          'html.__yt_zen_fullscreen [role="menu"] {',
-          '  z-index: 2147483647 !important;',
-          '  pointer-events: auto !important;',
-          '}',
-
-          'html.__yt_zen_fullscreen tp-yt-iron-overlay-backdrop,',
-          'html.__yt_zen_fullscreen .bottom-sheet-overlay {',
-          '  z-index: 2147483640 !important;',
-          '  pointer-events: auto !important;',
-          '}'
-        ].join('\\n');
-        (document.head || document.documentElement).appendChild(style);
-      }
-
-      injectCompleteFSCSS();
+      window.__zenTubeIsFullscreen = false;
 
       function notifyReactNative(isFS) {
+        window.__zenTubeIsFullscreen = !!isFS;
         if (window.ReactNativeWebView) {
           window.ReactNativeWebView.postMessage(JSON.stringify({
             type: 'fullscreen',
-            isFullscreen: isFS
+            isFullscreen: !!isFS
           }));
         }
       }
 
-      function enforceInlineVideo(v) {
-        if (!v) return;
-        try {
-          v.setAttribute('playsinline', 'true');
-          v.setAttribute('webkit-playsinline', 'true');
-          v.playsInline = true;
-          v.webkitPlaysInline = true;
-          v.removeAttribute('controls');
-        } catch(e) {}
-      }
+      function attachVideoListeners(v) {
+        if (!v || v.__zenTubeFSAttached) return;
+        v.__zenTubeFSAttached = true;
 
-      function ensureVideoAudio() {
-        try {
-          var v = document.querySelector('video');
-          if (v) {
-            enforceInlineVideo(v);
-            if (v.muted) v.muted = false;
-            if (v.volume === 0) v.volume = 1;
+        // iOS native WebKit fullscreen viewer lifecycle events
+        v.addEventListener('webkitbeginfullscreen', function() {
+          notifyReactNative(true);
+        }, true);
+
+        v.addEventListener('webkitendfullscreen', function() {
+          notifyReactNative(false);
+        }, true);
+
+        v.addEventListener('webkitpresentationmodechanged', function() {
+          if (v.webkitPresentationMode === 'fullscreen') {
+            notifyReactNative(true);
+          } else if (v.webkitPresentationMode === 'inline') {
+            notifyReactNative(false);
           }
-        } catch(e) {}
+        }, true);
       }
 
-      function enterCompleteFullscreen(video) {
-        lastToggleTime = Date.now();
-        injectCompleteFSCSS();
-        isLandscapeFS = true;
-        document.documentElement.classList.add('__yt_zen_fullscreen');
-        document.body.classList.add('__yt_zen_fullscreen');
+      // Attach to all current videos
+      var videos = document.querySelectorAll('video');
+      for (var i = 0; i < videos.length; i++) {
+        attachVideoListeners(videos[i]);
+      }
 
-        // Ensure audio is unmuted and mobile overlay is visible
-        ensureVideoAudio();
+      // Observe DOM for newly added video elements
+      if (typeof MutationObserver !== 'undefined') {
+        var obs = new MutationObserver(function() {
+          var allVids = document.querySelectorAll('video');
+          for (var j = 0; j < allVids.length; j++) {
+            attachVideoListeners(allVids[j]);
+          }
+        });
+        obs.observe(document.body || document.documentElement, {
+          childList: true,
+          subtree: true
+        });
+      }
 
-        var overlay = document.querySelector('.player-control-overlay');
-        if (overlay) {
-          overlay.classList.remove('fade-out');
-          overlay.classList.add('fade-in');
+      setInterval(function() {
+        var allVids = document.querySelectorAll('video');
+        for (var k = 0; k < allVids.length; k++) {
+          attachVideoListeners(allVids[k]);
         }
+      }, 1000);
 
-        notifyReactNative(true);
-      }
-
-      function exitCompleteFullscreen(video) {
-        lastToggleTime = Date.now();
-        isLandscapeFS = false;
-
-        document.documentElement.classList.remove('__yt_zen_fullscreen');
-        document.body.classList.remove('__yt_zen_fullscreen');
-
-        notifyReactNative(false);
-
-        // Remove any fixed inline styles
-        var playerContainer = document.querySelector('#player-container-id') || document.querySelector('.player-container');
-        if (playerContainer) {
-          playerContainer.style.removeProperty('position');
-          playerContainer.style.removeProperty('top');
-          playerContainer.style.removeProperty('left');
-          playerContainer.style.removeProperty('width');
-          playerContainer.style.removeProperty('height');
-          playerContainer.style.removeProperty('z-index');
-          try { playerContainer.scrollIntoView(); } catch(e) {}
-        }
-
-        // Multi-stage resize dispatch so YouTube smoothly reflows to portrait layout
-        window.dispatchEvent(new Event('resize'));
-        setTimeout(function() { window.dispatchEvent(new Event('resize')); }, 50);
-        setTimeout(function() { window.dispatchEvent(new Event('resize')); }, 150);
-        setTimeout(function() { window.dispatchEvent(new Event('resize')); }, 300);
-        setTimeout(function() { window.dispatchEvent(new Event('resize')); }, 600);
-        setTimeout(function() { window.dispatchEvent(new Event('resize')); }, 1000);
-
-        // Ensure video is visible and playing without blank screen
-        setTimeout(function() {
-          var v = document.querySelector('video');
-          if (v) {
-            v.style.removeProperty('display');
-            v.style.removeProperty('visibility');
-            if (v.paused && !v.userHitPause) {
-              try { v.play(); } catch(e) {}
-            }
-          }
-        }, 150);
-      }
-
-      // ── Hotstar-style WebKit Fullscreen Neutralization ──
-      // Prevents WebKit native media controls and AVPlayer from ever taking over
-      try {
-        Object.defineProperty(HTMLVideoElement.prototype, 'webkitDisplayingFullscreen', {
-          configurable: true,
-          get: function() {
-            return false;
-          }
-        });
-        Object.defineProperty(HTMLVideoElement.prototype, 'webkitSupportsFullscreen', {
-          configurable: true,
-          get: function() {
-            return false;
-          }
-        });
-        Object.defineProperty(document, 'fullscreenElement', {
-          configurable: true,
-          get: function() {
-            return isLandscapeFS ? (document.querySelector('#movie_player') || document.querySelector('video')) : null;
-          }
-        });
-        Object.defineProperty(document, 'webkitFullscreenElement', {
-          configurable: true,
-          get: function() {
-            return isLandscapeFS ? (document.querySelector('#movie_player') || document.querySelector('video')) : null;
-          }
-        });
-        Object.defineProperty(document, 'webkitIsFullScreen', {
-          configurable: true,
-          get: function() {
-            return false;
-          }
-        });
-      } catch(e) {}
-
-      document.exitFullscreen = function() {
-        exitCompleteFullscreen();
-        return Promise.resolve();
-      };
-      document.webkitExitFullscreen = function() {
-        exitCompleteFullscreen();
-      };
-
-      // Neuter WebKit native fullscreen trigger completely (matches Hotstar implementation)
-      HTMLVideoElement.prototype.webkitEnterFullscreen = function() {
-        return false;
-      };
-
-      HTMLVideoElement.prototype.webkitExitFullscreen = function() {
-        return false;
-      };
-
-      // ── Click / Tap interception ONLY for Fullscreen / Resize toggle button ──
-      // All other taps (gear icon, play/pause, scrubber, quality menu) flow directly to YouTube!
+      // On direct user tap of YouTube's fullscreen toggle button:
+      // Trigger WebKit native fullscreen viewer directly if not already in fullscreen
       document.addEventListener('click', function(e) {
         var target = e.target;
         if (!target) return;
-
         var fsBtn = target.closest(
           '.fullscreen-icon, ' +
           'button.fullscreen-icon, ' +
-          'button[aria-label*="Exit full screen" i], ' +
-          'button[aria-label*="Exit fullscreen" i], ' +
           'button[aria-label*="Full screen" i], ' +
           'button[aria-label*="Fullscreen" i], ' +
-          'button[aria-label*="Collapse" i], ' +
-          'button.player-control-fullscreen, ' +
           '.ytm-fullscreen-button, ' +
-          '.ytp-fullscreen-button, ' +
-          '.ytp-collapse-button'
+          '.ytp-fullscreen-button'
         );
         if (fsBtn) {
-          e.preventDefault();
-          e.stopPropagation();
-          var now = Date.now();
-          if (now - lastToggleTime < 1000) return;
-          lastToggleTime = now;
-
-          if (isLandscapeFS) {
-            exitCompleteFullscreen();
-          } else {
-            enterCompleteFullscreen();
+          var v = document.querySelector('video');
+          if (v && !v.webkitDisplayingFullscreen && v.webkitPresentationMode !== 'fullscreen') {
+            if (typeof v.webkitEnterFullscreen === 'function') {
+              try {
+                v.webkitEnterFullscreen();
+              } catch(err) {}
+            }
           }
-          return;
         }
       }, true);
 
-      // ── Swipe-down gesture to dismiss/exit fullscreen ──
-      var touchStartY = 0;
-      var touchStartX = 0;
-      var touchStartTime = 0;
-
-      window.addEventListener('touchstart', function(e) {
-        if (!isLandscapeFS || !e.touches || e.touches.length !== 1) return;
-        touchStartY = e.touches[0].clientY;
-        touchStartX = e.touches[0].clientX;
-        touchStartTime = Date.now();
-      }, { passive: true });
-
-      window.addEventListener('touchend', function(e) {
-        if (!isLandscapeFS || !e.changedTouches || e.changedTouches.length !== 1) return;
-        var deltaY = e.changedTouches[0].clientY - touchStartY;
-        var deltaX = Math.abs(e.changedTouches[0].clientX - touchStartX);
-        var deltaTime = Date.now() - touchStartTime;
-
-        // Swiped down (> 70px) mostly vertical within 600ms
-        if (deltaY > 70 && deltaY > deltaX * 1.3 && deltaTime < 600) {
-          exitCompleteFullscreen();
-        }
-      }, { passive: true });
-
-      // Unmute on play
-      document.addEventListener('play', ensureVideoAudio, true);
-
-      // Handle SPA navigation / popstate to prevent blank screens
-      window.addEventListener('popstate', function() {
-        if (isLandscapeFS) exitCompleteFullscreen();
-      });
-
-      window.addEventListener('hashchange', function() {
-        if (isLandscapeFS) exitCompleteFullscreen();
-      });
-
-      var lastCheckUrl = location.href;
-      setInterval(function() {
-        if (location.href !== lastCheckUrl) {
-          lastCheckUrl = location.href;
-          if (isLandscapeFS && location.pathname.indexOf('/watch') === -1) {
-            exitCompleteFullscreen();
-          }
-        }
-      }, 250);
-
+      // Global exit helper
       window.__exitZenTubeFullscreen = function() {
-        exitCompleteFullscreen();
+        var allVideos = document.querySelectorAll('video');
+        for (var i = 0; i < allVideos.length; i++) {
+          try {
+            if (allVideos[i].webkitDisplayingFullscreen) {
+              if (typeof allVideos[i].webkitExitFullscreen === 'function') {
+                allVideos[i].webkitExitFullscreen();
+              } else if (typeof allVideos[i].webkitSetPresentationMode === 'function') {
+                allVideos[i].webkitSetPresentationMode('inline');
+              }
+            }
+          } catch(e) {}
+        }
+        notifyReactNative(false);
       };
     })();
     true;
@@ -663,9 +341,9 @@ export function getFullscreenInterceptorScript(): string {
 /**
  * Brave iOS-style MediaBackgrounding:
  * 1. Spoofs Document.prototype.visibilityState and hidden so web players never pause on minimize
- * 2. Intercepts unintended pause events when the app moves to background with multi-retry
- * 3. Provides window.__triggerZenTubePiP() to programmatically enter native iOS Picture-in-Picture
- * 4. Tracks foreground/background state to prevent WebView freezing on return
+ * 2. Allows full, unhindered pausing in WebKit native fullscreen viewer and in foreground
+ * 3. Only auto-resumes unintentional pauses when app is genuinely sent to the background
+ * 4. Provides window.__triggerZenTubePiP() to programmatically enter native iOS Picture-in-Picture
  */
 export function getMediaBackgroundingScript(pipEnabled: boolean = true): string {
   return `
@@ -677,6 +355,11 @@ export function getMediaBackgroundingScript(pipEnabled: boolean = true): string 
       try {
         window.__zenTubePipEnabled = ${pipEnabled};
         window.__zenTubeIsBackground = false;
+
+        // Public helper for React Native AppState to accurately set background/foreground state
+        window.__zenTubeSetBackground = function(isBg) {
+          window.__zenTubeIsBackground = !!isBg;
+        };
 
         // ── 1. Page Visibility Spoofing (Brave Shield MediaBackgrounding) ──
         try {
@@ -706,7 +389,6 @@ export function getMediaBackgroundingScript(pipEnabled: boolean = true): string 
 
         var origPause = HTMLVideoElement.prototype.pause;
         HTMLVideoElement.prototype.pause = function() {
-          // Only mark as user pause if we're NOT in background
           if (!window.__zenTubeIsBackground) {
             this.userHitPause = true;
           }
@@ -725,7 +407,7 @@ export function getMediaBackgroundingScript(pipEnabled: boolean = true): string 
             var videos = document.querySelectorAll('video');
             for (var i = 0; i < videos.length; i++) {
               var v = videos[i];
-              if (v && !v.paused) {
+              if (v && !v.paused && !v.userHitPause) {
                 v.setAttribute('playsinline', 'true');
                 v.setAttribute('webkit-playsinline', 'true');
                 v.playsInline = true;
@@ -751,7 +433,6 @@ export function getMediaBackgroundingScript(pipEnabled: boolean = true): string 
               var playPromise = origPlay.call(v);
               if (playPromise && playPromise.catch) {
                 playPromise.catch(function() {
-                  // If play failed and we have retries left, try again
                   if (attempt < 3) {
                     setTimeout(function() {
                       tryResumeVideo(v, attempt + 1);
@@ -769,6 +450,14 @@ export function getMediaBackgroundingScript(pipEnabled: boolean = true): string 
           }
         }
 
+        // Helper to check if a video is currently displaying in WebKit native fullscreen
+        function isVideoInFullscreen(v) {
+          return !!(
+            (v && (v.webkitDisplayingFullscreen || v.webkitPresentationMode === 'fullscreen')) ||
+            window.__zenTubeIsFullscreen
+          );
+        }
+
         // ── 5. Attach Protection to Videos ──
         function protectVideo(v) {
           if (!v || v.__zenTubeProtected) return;
@@ -778,8 +467,32 @@ export function getMediaBackgroundingScript(pipEnabled: boolean = true): string 
           v.setAttribute('webkit-playsinline', 'true');
           v.playsInline = true;
 
-          // Resume on unintended background pause with multi-retry
+          // Clear userHitPause whenever the video plays
+          v.addEventListener('play', function() {
+            v.userHitPause = false;
+          }, false);
+
+          v.addEventListener('playing', function() {
+            v.userHitPause = false;
+          }, false);
+
+          // ── THE CRITICAL PAUSE EVENT HANDLER ──
+          // 1. If in WebKit native fullscreen: User tapped the native AVPlayer pause button!
+          //    -> v.userHitPause = true, stay paused, NEVER auto-resume.
+          // 2. If app is in foreground: User tapped pause on web/headset/keyboard!
+          //    -> v.userHitPause = true, stay paused, NEVER auto-resume.
+          // 3. ONLY if app is in background AND user did not pause -> auto-resume for background playback.
           v.addEventListener('pause', function() {
+            if (isVideoInFullscreen(v)) {
+              v.userHitPause = true;
+              return;
+            }
+
+            if (!window.__zenTubeIsBackground) {
+              v.userHitPause = true;
+              return;
+            }
+
             if (!v.userHitPause && !v.ended) {
               tryResumeVideo(v, 0);
             }
@@ -796,11 +509,13 @@ export function getMediaBackgroundingScript(pipEnabled: boolean = true): string 
           if (window.__zenTubePipEnabled) {
             window.__triggerZenTubePiP();
           }
-          // Force-resume any paused videos after a short delay
+          // Force-resume any non-user-paused videos after a short delay
           setTimeout(function() {
             var vids = document.querySelectorAll('video');
             for (var i = 0; i < vids.length; i++) {
-              tryResumeVideo(vids[i], 0);
+              if (!vids[i].userHitPause && !vids[i].ended && vids[i].paused) {
+                tryResumeVideo(vids[i], 0);
+              }
             }
           }, 100);
         });
@@ -809,18 +524,25 @@ export function getMediaBackgroundingScript(pipEnabled: boolean = true): string 
           window.__zenTubeIsBackground = false;
         });
 
-        // Also handle blur/focus at window level
+        // Window blur/focus handling:
+        // When WebKit presents AVPlayerViewController for fullscreen, window loses focus (blur).
+        // That is NOT app backgrounding!
         window.addEventListener('blur', function() {
-          window.__zenTubeIsBackground = true;
-          // Ensure videos keep playing after a moment
-          setTimeout(function() {
-            var vids = document.querySelectorAll('video');
-            for (var i = 0; i < vids.length; i++) {
-              if (!vids[i].userHitPause && !vids[i].ended && vids[i].paused) {
-                tryResumeVideo(vids[i], 0);
-              }
+          var vids = document.querySelectorAll('video');
+          var anyInFS = false;
+          for (var i = 0; i < vids.length; i++) {
+            if (isVideoInFullscreen(vids[i])) {
+              anyInFS = true;
+              break;
             }
-          }, 150);
+          }
+          if (anyInFS || window.__zenTubeIsFullscreen) {
+            return;
+          }
+
+          if (document.hidden) {
+            window.__zenTubeIsBackground = true;
+          }
         });
 
         window.addEventListener('focus', function() {
@@ -856,13 +578,18 @@ export function getMediaBackgroundingScript(pipEnabled: boolean = true): string 
           });
         }
 
-        // ── 9. Periodic protection + resume check (every 2s to reduce CPU) ──
+        // ── 9. Periodic protection + resume check (every 2s) ──
         setInterval(function() {
           var allVids = document.querySelectorAll('video');
           for (var j = 0; j < allVids.length; j++) {
             protectVideo(allVids[j]);
-            // If we're in background and a video got paused unintentionally, resume it
-            if (window.__zenTubeIsBackground && !allVids[j].userHitPause && !allVids[j].ended && allVids[j].paused) {
+            if (
+              window.__zenTubeIsBackground &&
+              !allVids[j].userHitPause &&
+              !allVids[j].ended &&
+              allVids[j].paused &&
+              !isVideoInFullscreen(allVids[j])
+            ) {
               tryResumeVideo(allVids[j], 0);
             }
           }

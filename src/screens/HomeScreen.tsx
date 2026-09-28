@@ -49,26 +49,30 @@ export function HomeScreen() {
       appStateRef.current = nextAppState;
 
       if (nextAppState === 'inactive' || nextAppState === 'background') {
-        // Going to background → trigger PiP if enabled
-        if (settings.pipYouTube) {
-          webViewRef.current?.injectJavaScript(`
-            (function() {
-              if (window.__triggerZenTubePiP) {
-                window.__triggerZenTubePiP();
-              }
-            })();
-            true;
-          `);
-        }
-      } else if (nextAppState === 'active' && (prevState === 'background' || prevState === 'inactive')) {
-        // Returning to foreground → ensure video presentation mode is inline
+        // Going to background → notify webview and trigger PiP if enabled
         webViewRef.current?.injectJavaScript(`
           (function() {
+            if (window.__zenTubeSetBackground) {
+              window.__zenTubeSetBackground(true);
+            }
+            if (window.__triggerZenTubePiP && ${settings.pipYouTube}) {
+              window.__triggerZenTubePiP();
+            }
+          })();
+          true;
+        `);
+      } else if (nextAppState === 'active' && (prevState === 'background' || prevState === 'inactive')) {
+        // Returning to foreground → notify webview and restore PiP videos to inline
+        webViewRef.current?.injectJavaScript(`
+          (function() {
+            if (window.__zenTubeSetBackground) {
+              window.__zenTubeSetBackground(false);
+            }
             try {
               var videos = document.querySelectorAll('video');
               for (var i = 0; i < videos.length; i++) {
                 var v = videos[i];
-                if (v && typeof v.webkitSetPresentationMode === 'function') {
+                if (v && typeof v.webkitSetPresentationMode === 'function' && v.webkitPresentationMode === 'picture-in-picture') {
                   try { v.webkitSetPresentationMode('inline'); } catch(e) {}
                 }
               }
