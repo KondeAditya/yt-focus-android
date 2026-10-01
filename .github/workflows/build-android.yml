@@ -1,0 +1,75 @@
+name: Build Android APK & AAB
+
+on:
+  push:
+    branches:
+      - main
+      - master
+  workflow_dispatch: # Allows manual trigger from the GitHub UI
+
+jobs:
+  build:
+    name: Build Android Release
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: 'npm'
+
+      - name: Setup Java JDK
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '17'
+
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@v4
+
+      - name: Install Dependencies
+        run: npm install
+
+      - name: Prebuild Android Project
+        run: npx expo prebuild --platform android --clean
+
+      - name: Build Android Release APK
+        run: |
+          cd android
+          chmod +x gradlew
+          ./gradlew assembleRelease --no-daemon
+
+      - name: Copy Release APK
+        run: |
+          mkdir -p artifacts
+          APK_PATH=$(find android/app/build/outputs/apk/release -name "*.apk" | head -n 1)
+          echo "Found APK: $APK_PATH"
+          cp "$APK_PATH" artifacts/YTFocus.apk
+
+      - name: Build Android Release AAB (App Bundle)
+        run: |
+          cd android
+          ./gradlew bundleRelease --no-daemon
+
+      - name: Copy Release AAB
+        run: |
+          AAB_PATH=$(find android/app/build/outputs/bundle/release -name "*.aab" | head -n 1)
+          echo "Found AAB: $AAB_PATH"
+          cp "$AAB_PATH" artifacts/YTFocus.aab
+
+      - name: Upload Release APK Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: YTFocus-Android-APK
+          path: artifacts/YTFocus.apk
+          retention-days: 7
+
+      - name: Upload Release AAB Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: YTFocus-Android-AAB
+          path: artifacts/YTFocus.aab
+          retention-days: 7
